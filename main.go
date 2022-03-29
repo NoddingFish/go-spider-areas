@@ -9,21 +9,25 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"time"
 )
 
 var baseUrl = "http://www.stats.gov.cn/tjsj/tjbz/tjyqhdmhcxhfdm/2021/"
 var tableName = "areas_standard"
 var f *os.File
-var id = 0
+var id = 43170
+
+var appointProvince = "宁夏回族自治区"
+var runProvince = false
 
 var GarbledCode = false
 
+var currentProvince = ""
+var currentCity = ""
+var currentCounty = ""
+var currentTown = ""
+
 func GetSQL() {
 	//地址
-	//打开area.sql文件，准备写入sql语句
-	f, _ = os.Create("area.sql")
-
 	FindProvince(baseUrl)
 
 	fmt.Println("数据已写入 area.sql 中，共: " + strconv.Itoa(id) + " 条数据")
@@ -40,18 +44,29 @@ func FindProvince(url string) {
 		//根据页面特点，有加粗<b>标签的是省级数据
 		parentId := 0
 		tr.Find("td").Each(func(i int, td *goquery.Selection) {
+			//打开area.sql文件，准备写入sql语句
 			province := td.Find("a")
-			provinceName := UseNewEncoder(province.Text(), "gbk", "utf-8")
-			fmt.Println("省份：" + provinceName)
-			parentId = 0
-			id = id + 1
-			io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+provinceName+"',1,"+strconv.Itoa(parentId)+");\r\n")
-			hrefUrl, res := province.Attr("href")
-			if res {
-				handleUrl := handleUrl(url)
-				FindCity(handleUrl+hrefUrl, id)
-				fmt.Println("=== 等待下一个省份开始 ===")
-				time.Sleep(time.Second * 60)
+			currentProvince = UseNewEncoder(province.Text(), "gbk", "utf-8")
+			if appointProvince != "" {
+				if appointProvince == currentProvince {
+					runProvince = true
+				}
+			} else {
+				runProvince = true
+			}
+			if runProvince {
+				f, _ = os.Create("area_" + currentProvince + ".sql")
+				fmt.Println("省份：" + currentProvince + string(id+1))
+				parentId = 0
+				id = id + 1
+				io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+currentProvince+"',1,"+strconv.Itoa(parentId)+");\r\n")
+				hrefUrl, res := province.Attr("href")
+				if res {
+					handleUrl := handleUrl(url)
+					FindCity(handleUrl+hrefUrl, id)
+					fmt.Println("=== 等待下一个省份开始 ===")
+					//time.Sleep(time.Second * 20)
+				}
 			}
 		})
 	})
@@ -66,11 +81,12 @@ func FindCity(url string, parentId int) {
 	doc.Find(".citytr").Each(func(i int, tr *goquery.Selection) {
 		//根据页面特点，有加粗<b>标签的是省级数据
 		cityId := tr.Find("td").First().Find("a").Text()
-		cityName := tr.Find("td").Last().Find("a").Text()
-		cityName = UseNewEncoder(cityName, "gbk", "utf-8")
-		fmt.Println("城市：" + cityId + "  ==> " + cityName)
+		currentCity = tr.Find("td").Last().Find("a").Text()
+		currentCity = UseNewEncoder(currentCity, "gbk", "utf-8")
+		fmt.Println("城市：" + currentProvince + cityId + "  ==> " + currentCity)
 		id = id + 1
-		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+cityName+"',2,"+strconv.Itoa(parentId)+");\r\n")
+		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+currentCity+"',2,"+strconv.Itoa(parentId)+");\r\n")
+		//time.Sleep(time.Second * 5)
 		hrefUrl, res := tr.Find("td").First().Find("a").Attr("href")
 		if res {
 			handleUrl := handleUrl(url)
@@ -88,21 +104,25 @@ func FindCounty(url string, parentId int) {
 	doc.Find(".countytr").Each(func(i int, tr *goquery.Selection) {
 		//根据页面特点，有加粗<b>标签的是省级数据
 		countyId := tr.Find("td").First().Text()
-		countyName := tr.Find("td").Last().Text()
+		currentCounty = tr.Find("td").Last().Text()
 		if countyId == "" {
 			countyId = tr.Find("td").First().Find("a").Text()
-			countyName = tr.Find("td").Last().Find("a").Text()
+			currentCounty = tr.Find("td").Last().Find("a").Text()
 		}
-		countyName = UseNewEncoder(countyName, "gbk", "utf-8")
-		fmt.Println("区县：" + countyId + "  ==> " + countyName)
+		currentCounty = UseNewEncoder(currentCounty, "gbk", "utf-8")
+		fmt.Println("区县：" + currentProvince + countyId + "  ==> " + currentCounty)
 		id++
-		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+countyName+"',3,"+strconv.Itoa(parentId)+");\r\n")
+		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+currentCounty+"',3,"+strconv.Itoa(parentId)+");\r\n")
 		hrefUrl, res := tr.Find("td").First().Find("a").Attr("href")
 		if res {
 			handleUrl := handleUrl(url)
 			FindTown(handleUrl+hrefUrl, id)
 		}
 	})
+
+	if doc.Find(".countytr").Text() == "" {
+		FindTown(url, parentId)
+	}
 }
 
 // 查找镇/街道
@@ -114,15 +134,15 @@ func FindTown(url string, parentId int) {
 	doc.Find(".towntr").Each(func(i int, tr *goquery.Selection) {
 		//根据页面特点，有加粗<b>标签的是省级数据
 		townId := tr.Find("td").First().Text()
-		townName := tr.Find("td").Last().Text()
+		currentTown = tr.Find("td").Last().Text()
 		if townId == "" {
 			townId = tr.Find("td").First().Find("a").Text()
-			townName = tr.Find("td").Last().Find("a").Text()
+			currentTown = tr.Find("td").Last().Find("a").Text()
 		}
-		townName = UseNewEncoder(townName, "gbk", "utf-8")
-		fmt.Println("镇/街道：" + townId + "  ==> " + townName)
+		currentTown = UseNewEncoder(currentTown, "gbk", "utf-8")
+		fmt.Println("镇/街道：" + currentProvince + townId + "  ==> " + currentTown)
 		id++
-		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+townName+"',4,"+strconv.Itoa(parentId)+");\r\n")
+		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+currentTown+"',4,"+strconv.Itoa(parentId)+");\r\n")
 		//hrefUrl, res := tr.Find("td").First().Find("a").Attr("href")
 		//if res {
 		//	handleUrl := handleUrl(url)
@@ -146,7 +166,7 @@ func FindVillage(url string, parentId int) {
 			villageName = tr.Find("td").Last().Find("a").Text()
 		}
 		villageName = UseNewEncoder(villageName, "gbk", "utf-8")
-		fmt.Println("社区/村：" + villageId + "  ==> " + villageName)
+		fmt.Println("社区/村：" + currentProvince + villageId + "  ==> " + villageName)
 		id++
 		io.WriteString(f, "INSERT INTO "+tableName+"(`id`,`name`,`level`,`parent_id`) values("+strconv.Itoa(id)+",'"+villageName+"',5,"+strconv.Itoa(parentId)+");\r\n")
 	})
